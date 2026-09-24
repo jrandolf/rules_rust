@@ -76,6 +76,55 @@ def _make_transitive_count_test(marker_suffix, output_group_name):
 clippy_transitive_test = _make_transitive_count_test(".clippy.ok", "clippy_checks")
 rustfmt_transitive_test = _make_transitive_count_test(".rustfmt.ok", "rustfmt_checks")
 
+_RunnerInfo = provider(fields = {"file": "Underlying lint runner executable"})
+
+def _runner_aspect_impl(_target, ctx):
+    return [_RunnerInfo(file = ctx.rule.attr._runner[DefaultInfo].files_to_run.executable)]
+
+_runner_aspect = aspect(implementation = _runner_aspect_impl)
+
+def _runner_format_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    runner = target[_RunnerInfo].file
+    executable = target[DefaultInfo].files_to_run.executable
+
+    asserts.equals(env, runner.extension, executable.extension)
+
+    markers = target[RunEnvironmentInfo].environment["RUST_LINT_TEST_MARKERS"]
+    separator = ";" if runner.extension == "exe" else ":"
+    asserts.equals(env, 1, markers.count(separator))
+
+    return analysistest.end(env)
+
+_runner_format_test = analysistest.make(
+    _runner_format_test_impl,
+    extra_target_under_test_aspects = [_runner_aspect],
+)
+
+def _runner_platform_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    runner = target[_RunnerInfo].file
+    asserts.true(
+        env,
+        runner.path.startswith("bazel-out/macos_x86_64-"),
+        "Expected the test-platform runner, got {}".format(runner.path),
+    )
+    return analysistest.end(env)
+
+_runner_platform_test = analysistest.make(
+    _runner_platform_test_impl,
+    config_settings = {
+        "//command_line_option:extra_execution_platforms": [
+            str(Label("//test/unit:macos_aarch64")),
+            str(Label("//test/unit:macos_x86_64")),
+        ],
+        "//command_line_option:platforms": str(Label("//test/unit:macos_x86_64")),
+    },
+    extra_target_under_test_aspects = [_runner_aspect],
+)
+
 def lint_tests_suite(name):
     """Wire up the fixture graph and the two analysistests.
 
@@ -131,10 +180,40 @@ def lint_tests_suite(name):
         target_under_test = ":rustfmt_fixture",
     )
 
+    _runner_format_test(
+        name = "clippy_runner_format_test",
+        target_under_test = ":clippy_fixture",
+    )
+    _runner_format_test(
+        name = "rustfmt_runner_format_test",
+        target_under_test = ":rustfmt_fixture",
+    )
+
+    _runner_platform_test(
+        name = "clippy_runner_platform_test",
+        target_under_test = ":clippy_fixture",
+        target_compatible_with = [
+            "@platforms//cpu:aarch64",
+            "@platforms//os:macos",
+        ],
+    )
+    _runner_platform_test(
+        name = "rustfmt_runner_platform_test",
+        target_under_test = ":rustfmt_fixture",
+        target_compatible_with = [
+            "@platforms//cpu:aarch64",
+            "@platforms//os:macos",
+        ],
+    )
+
     native.test_suite(
         name = name,
         tests = [
             ":clippy_transitive_test",
             ":rustfmt_transitive_test",
+            ":clippy_runner_format_test",
+            ":rustfmt_runner_format_test",
+            ":clippy_runner_platform_test",
+            ":rustfmt_runner_platform_test",
         ],
     )
