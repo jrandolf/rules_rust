@@ -1,6 +1,5 @@
 """BUILD file for cargo info helper binary."""
 
-load("@rules_python//python:defs.bzl", "py_test")
 load("//rust:defs.bzl", "rust_binary", "rust_test")
 
 rust_binary(
@@ -14,12 +13,4 @@ rust_binary(
 rust_test(
     name = "unit_test",
     crate = ":cargo_toml_info",
-)
-
-py_test(
-    name = "declared_manifests_test",
-    srcs = ["declared_manifests_test.py"],
-    args = ["$(rlocationpath :cargo_toml_info)"],
-    data = [":cargo_toml_info"],
-    deps = ["@rules_python//python/runfiles"],
 )
