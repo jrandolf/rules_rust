@@ -1,0 +1,37 @@
+load("//rust:defs.bzl", "rust_test")
+load(":coverage_test.bzl", "collector_platform_test")
+
+collector_platform_test(
+    name = "collector_platform_test",
+    target_under_test = ":test",
+)
+
+rust_test(
+    name = "test",
+    srcs = ["test.rs"],
+    edition = "2021",
+)
+
+constraint_setting(name = "execution_role")
+
+constraint_value(
+    name = "compiler",
+    constraint_setting = ":execution_role",
+)
+
+constraint_value(
+    name = "tester",
+    constraint_setting = ":execution_role",
+)
+
+platform(
+    name = "compiler_platform",
+    constraint_values = [":compiler"],
+    parents = ["@platforms//host"],
+)
+
+platform(
+    name = "test_platform",
+    constraint_values = [":tester"],
+    parents = ["@platforms//host"],
+)
