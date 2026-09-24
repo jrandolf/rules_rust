@@ -3,3 +3,21 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "common.bzl",
 ])
+
+# Distinct executable platforms let analysis tests verify the test execution
+# group without running an x86_64 test binary on an arm64 host.
+platform(
+    name = "macos_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:macos",
+    ],
+)
+
+platform(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:macos",
+    ],
+)
