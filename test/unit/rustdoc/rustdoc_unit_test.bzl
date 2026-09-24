@@ -197,6 +197,76 @@ rustdoc_with_json_error_format_test = analysistest.make(_rustdoc_with_json_error
 })
 rustdoc_test_uses_cc_library_native_lib_test = analysistest.make(_rustdoc_test_uses_cc_library_native_lib_test_impl)
 
+_CompiledRunnerInfo = provider(fields = {"file": "Compiled doctest runner executable"})
+
+def _compiled_runner_aspect_impl(_target, ctx):
+    return [_CompiledRunnerInfo(file = ctx.rule.attr._test_runner_bin[DefaultInfo].files_to_run.executable)]
+
+_compiled_runner_aspect = aspect(implementation = _compiled_runner_aspect_impl)
+
+def _compiled_runner_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    runner = target[_CompiledRunnerInfo].file
+    executable = target[DefaultInfo].files_to_run.executable
+
+    asserts.true(env, any([action.mnemonic == "RustdocTestCompile" for action in target.actions]))
+    asserts.equals(env, runner.extension, executable.extension)
+    return analysistest.end(env)
+
+compiled_runner_test = analysistest.make(
+    _compiled_runner_test_impl,
+    config_settings = {
+        str(Label("//rust/toolchain/channel:channel")): "nightly",
+        str(Label("//rust/settings:experimental_compile_rustdoc_tests")): True,
+    },
+    extra_target_under_test_aspects = [_compiled_runner_aspect],
+)
+
+def _compiled_runner_platform_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    runner = target[_CompiledRunnerInfo].file
+    asserts.true(
+        env,
+        runner.path.startswith("bazel-out/macos_x86_64-"),
+        "Expected the test-platform runner, got {}".format(runner.path),
+    )
+    return analysistest.end(env)
+
+compiled_runner_platform_test = analysistest.make(
+    _compiled_runner_platform_test_impl,
+    config_settings = {
+        "//command_line_option:extra_execution_platforms": [
+            str(Label("//test/unit:macos_aarch64")),
+            str(Label("//test/unit:macos_x86_64")),
+        ],
+        "//command_line_option:platforms": str(Label("//test/unit:macos_x86_64")),
+        str(Label("//rust/toolchain/channel:channel")): "nightly",
+        str(Label("//rust/settings:experimental_compile_rustdoc_tests")): True,
+    },
+    extra_target_under_test_aspects = [_compiled_runner_aspect],
+)
+
+def _legacy_cross_build_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    asserts.expect_failure(env, "Cross-built doctests require experimental_compile_rustdoc_tests")
+    return analysistest.end(env)
+
+legacy_cross_build_test = analysistest.make(
+    _legacy_cross_build_test_impl,
+    expect_failure = True,
+    config_settings = {
+        "//command_line_option:extra_execution_platforms": [
+            str(Label("//test/unit:macos_aarch64")),
+            str(Label("//test/unit:macos_x86_64")),
+        ],
+        "//command_line_option:platforms": str(Label("//test/unit:macos_x86_64")),
+        str(Label("//rust/toolchain/channel:channel")): "stable",
+        str(Label("//rust/settings:experimental_compile_rustdoc_tests")): False,
+    },
+)
+
 def _target_maker(rule_fn, name, rustdoc_deps = [], rustdoc_proc_macro_deps = [], **kwargs):
     rule_fn(
         name = name,
@@ -464,6 +534,13 @@ def _define_targets():
         target_compatible_with = NOT_WINDOWS,
     )
 
+    rust_doc_test(
+        name = "compiled_runner_fixture",
+        crate = ":lib",
+        deps = [":adder"],
+        tags = ["manual"],
+    )
+
 def rustdoc_test_suite(name):
     """Entry-point macro called from the BUILD file.
 
@@ -533,6 +610,29 @@ def rustdoc_test_suite(name):
         target_under_test = ":lib_with_cc_library_doctest",
     )
 
+    compiled_runner_test(
+        name = "compiled_runner_test",
+        target_under_test = ":compiled_runner_fixture",
+    )
+
+    compiled_runner_platform_test(
+        name = "compiled_runner_platform_test",
+        target_under_test = ":compiled_runner_fixture",
+        target_compatible_with = [
+            "@platforms//cpu:aarch64",
+            "@platforms//os:macos",
+        ],
+    )
+
+    legacy_cross_build_test(
+        name = "legacy_cross_build_test",
+        target_under_test = ":lib_doctest",
+        target_compatible_with = [
+            "@platforms//cpu:aarch64",
+            "@platforms//os:macos",
+        ],
+    )
+
     rustdoc_for_generated_root_test(
         name = "rustdoc_for_generated_root_test",
         target_under_test = ":gen_lib_doc",
@@ -562,6 +662,9 @@ def rustdoc_test_suite(name):
             ":rustdoc_with_args_test",
             ":rustdoc_with_json_error_format_test",
             ":rustdoc_test_uses_cc_library_native_lib_test",
+            ":compiled_runner_test",
+            ":compiled_runner_platform_test",
+            ":legacy_cross_build_test",
             ":rustdoc_for_generated_root_test",
             ":rustdoc_zip_output_test",
         ],
