@@ -262,7 +262,7 @@ impl BuildScriptOutput {
         }
 
         CompileAndLinkFlags {
-            compile_flags: compile_flags.join("\n"),
+            compile_flags: Self::redact_exec_root(&compile_flags.join("\n"), exec_root),
             link_flags: Self::redact_flags(&link_flags.join("\n"), exec_root, out_dir),
             link_search_paths: Self::redact_flags(
                 &link_search_paths.join("\n"),
@@ -439,6 +439,15 @@ non-assignment-instructions-are-ignored",
         );
         assert_eq!(flags.compile_flags, "");
         assert_eq!(flags.link_flags, "");
+    }
+
+    #[test]
+    fn unscoped_link_args_relocate_build_script_paths() {
+        let outputs = vec![BuildScriptOutput::LinkArg(
+            "/exec/out/resource.o".to_owned(),
+        )];
+        let flags = BuildScriptOutput::outputs_to_flags(&outputs, "/exec", "out");
+        assert_eq!(flags.compile_flags, "-Clink-arg=${pwd}/out/resource.o");
     }
 
     #[test]
