@@ -935,11 +935,6 @@ cargo_build_script = rule(
             default = Label("//cargo/private/cargo_build_script_runner:runner"),
             cfg = "exec",
         ),
-        "_process_wrapper": attr.label(
-            executable = True,
-            default = Label("//util/process_wrapper:process_wrapper"),
-            cfg = "exec",
-        ),
         "_cargo_manifest_dir_filename_suffixes_to_retain": attr.label(
             default = Label("//cargo/settings:cargo_manifest_dir_filename_suffixes_to_retain"),
         ),
@@ -978,6 +973,11 @@ cargo_build_script = rule(
         ),
         "_out_dir_volatile_file_basenames": attr.label(
             default = Label("//cargo/settings:out_dir_volatile_file_basenames"),
+        ),
+        "_process_wrapper": attr.label(
+            executable = True,
+            default = Label("//util/process_wrapper:process_wrapper"),
+            cfg = "exec",
         ),
     },
     fragments = ["cpp"],
