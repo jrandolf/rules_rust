@@ -579,6 +579,10 @@ def _cargo_build_script_impl(ctx):
     if links:
         env["CARGO_MANIFEST_LINKS"] = links
 
+    # Set the execution SDK default before explicit toolchain and rule values.
+    if toolchain.exec_triple.system == "macos":
+        env["DYLD_LIBRARY_PATH"] = "${pwd}/${rustc_library}"
+
     # Add environment variables from the Rust toolchain.
     env.update(toolchain.env)
 
@@ -713,9 +717,28 @@ def _cargo_build_script_impl(ctx):
     if not emit_warnings:
         env["RULES_RUST_SUPPRESS_BUILD_SCRIPT_WARNINGS"] = "1"
 
+    runner = ctx.executable._cargo_build_script_runner
+    arguments = [args, runfiles_args]
+    if toolchain.exec_triple.system == "macos":
+        # The Cargo runner queries rustc before expanding its own environment.
+        # Expand the SDK path before starting it, using the existing native wrapper.
+        wrapper_args = ctx.actions.args()
+        wrapper_args.add("--subst", "pwd=${pwd}")
+        wrapper_args.add_all(
+            [toolchain.sysroot_anchor],
+            before_each = "--subst",
+            format_each = "rustc_library=%s/lib",
+            map_each = _get_dirname,
+        )
+        wrapper_args.add("--env", "DYLD_LIBRARY_PATH=" + env["DYLD_LIBRARY_PATH"])
+        wrapper_args.add("--")
+        wrapper_args.add(runner)
+        arguments = [wrapper_args] + arguments
+        runner = ctx.executable._process_wrapper
+
     ctx.actions.run(
-        executable = ctx.executable._cargo_build_script_runner,
-        arguments = [args, runfiles_args],
+        executable = runner,
+        arguments = arguments,
         outputs = [
             out_dir,
             env_out,
@@ -728,6 +751,7 @@ def _cargo_build_script_impl(ctx):
             runfiles_dir,
         ] + extra_output,
         tools = [
+            ctx.attr._cargo_build_script_runner[DefaultInfo].files_to_run,
             ctx.attr.script[DefaultInfo].files_to_run,
             tools,
         ],
@@ -759,6 +783,9 @@ def _cargo_build_script_impl(ctx):
             **output_groups
         ),
     ]
+
+def _get_dirname(file):
+    return file.dirname
 
 cargo_build_script = rule(
     doc = (
@@ -906,6 +933,11 @@ cargo_build_script = rule(
             executable = True,
             allow_files = True,
             default = Label("//cargo/private/cargo_build_script_runner:runner"),
+            cfg = "exec",
+        ),
+        "_process_wrapper": attr.label(
+            executable = True,
+            default = Label("//util/process_wrapper:process_wrapper"),
             cfg = "exec",
         ),
         "_cargo_manifest_dir_filename_suffixes_to_retain": attr.label(

@@ -246,10 +246,16 @@ def rustdoc_compile_action(
     # must be updated to the `short_path` equivalent as it will now be
     # a part of runfiles.
     if is_test:
+        if env.get("DYLD_LIBRARY_PATH") == "${pwd}/${rustc_library}":
+            env["DYLD_LIBRARY_PATH"] = "${{pwd}}/{}/lib".format(toolchain.sysroot_short_path)
         if "SYSROOT" in env:
             env.update({"SYSROOT": "${{pwd}}/{}".format(toolchain.sysroot_short_path)})
         if "OUT_DIR" in env:
             env.update({"OUT_DIR": "${{pwd}}/{}".format(build_info.out_dir.short_path)})
+
+    if is_test and toolchain.exec_triple.system == "macos":
+        # The later assignment wins after the test SDK moves into runfiles.
+        args.process_wrapper_flags.add("--env", "DYLD_LIBRARY_PATH=" + env["DYLD_LIBRARY_PATH"])
 
     # Create the combined inputs including HTML customization files
     all_inputs = depset([crate_info.output], transitive = [compile_inputs, depset(html_input_files)])

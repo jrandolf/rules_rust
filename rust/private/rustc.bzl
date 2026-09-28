@@ -459,7 +459,17 @@ def get_linker_and_args(ctx, crate_type, toolchain, cc_toolchain, feature_config
         )
         ld_is_direct_driver = False
 
-    if not ld or toolchain.linker_preference == "rust":
+    if (toolchain.target_os == "windows" and toolchain.target_abi == "msvc" and
+        ld and ld.replace("\\", "/").split("/")[-1].lower() in ("clang-cl", "clang-cl.exe")):
+        # Rust emits link.exe arguments, not clang-cl driver arguments. Keep
+        # Rust's final-link decisions and use its declared LLD executable.
+        if not toolchain.linker or toolchain.linker_type != "direct":
+            fail("MSVC linking through clang-cl requires a direct rust_toolchain.linker")
+        ld = toolchain.linker.path
+        ld_is_direct_driver = True
+        link_args = _msvc_direct_link_args(link_args)
+
+    elif not ld or toolchain.linker_preference == "rust":
         ld = toolchain.linker.path
         ld_is_direct_driver = toolchain.linker_type == "direct"
 
@@ -532,6 +542,32 @@ def get_linker_and_args(ctx, crate_type, toolchain, cc_toolchain, feature_config
         ])
 
     return ld, ld_is_direct_driver, link_args, link_env
+
+def _msvc_direct_link_args(args):
+    result = []
+    forwarded = False
+    after_link = False
+    for arg in args:
+        if after_link:
+            result.append(arg)
+            continue
+        value = arg.removeprefix("/clang:")
+        if forwarded:
+            result.append(value)
+            forwarded = False
+        elif value == "-Xlinker":
+            forwarded = True
+        elif arg == "/link":
+            after_link = True
+        elif value.startswith(("--target=", "-resource-dir=", "-rtlib=", "-fuse-ld=")):
+            continue
+        elif arg in ("/MD", "/MDd", "/MT", "/MTd"):
+            continue
+        else:
+            result.append(value)
+    if forwarded:
+        fail("clang-cl linker arguments end with an unpaired -Xlinker")
+    return result
 
 # The environment variables rustc reads the Apple deployment target from,
 # keyed by the OS names clang accepts in a `-target` triple and in
@@ -1163,6 +1199,18 @@ def construct_arguments(
     # Wrapper args first
     process_wrapper_flags = ctx.actions.args()
 
+    # Remote workers may materialize rustc as a symlink into a content cache.
+    # dyld then loses the SDK-relative rpath. Use the execution SDK, with a
+    # File-derived substitution so output path mapping also rewrites the path.
+    if toolchain.exec_triple.system == "macos":
+        env["DYLD_LIBRARY_PATH"] = "${pwd}/${rustc_library}"
+        process_wrapper_flags.add_all(
+            [toolchain.sysroot_anchor],
+            before_each = "--subst",
+            format_each = "rustc_library=%s/lib",
+            map_each = _get_dirname,
+        )
+
     for build_env_file in build_env_files:
         process_wrapper_flags.add("--env-file", build_env_file)
 
@@ -1653,6 +1701,12 @@ def construct_arguments(
     # Needed for bzlmod-aware runfiles resolution.
     env["REPOSITORY_NAME"] = ctx.label.workspace_name
 
+    if toolchain.exec_triple.system == "macos":
+        # macOS may strip DYLD variables while starting the wrapper. Restore
+        # the final value from argv after the wrapper has started. Clippy also
+        # calls this helper, so keep the restore beside its environment.
+        process_wrapper_flags.add("--env", "DYLD_LIBRARY_PATH=" + env["DYLD_LIBRARY_PATH"])
+
     # Create a struct which keeps the arguments separate so each may be tuned or
     # replaced where necessary. `Args` objects cannot be merged with one
     # another, so a caller-supplied `rust_flags` `Args` lives on the
@@ -2094,12 +2148,28 @@ def rustc_compile_action(
         # Run without process_wrapper
         if build_env_files or build_flags_files or stamp or build_metadata:
             fail("build_env_files, build_flags_files, stamp, build_metadata are not supported when building without process_wrapper")
+        bootstrap_path = args.rustc_path
+        if toolchain.exec_triple.system == "macos":
+            # The bootstrap shell expands argv, not env; protected macOS shells
+            # also discard DYLD variables. Restore it after the shell starts.
+            bootstrap_path = ctx.actions.args()
+            bootstrap_path.add("--")
+            bootstrap_path.add("/usr/bin/env")
+            if env["DYLD_LIBRARY_PATH"] == "${pwd}/${rustc_library}":
+                bootstrap_path.add_all(
+                    [toolchain.sysroot_anchor],
+                    format_each = "DYLD_LIBRARY_PATH=${pwd}/%s/lib",
+                    map_each = _get_dirname,
+                )
+            else:
+                bootstrap_path.add("DYLD_LIBRARY_PATH=" + env["DYLD_LIBRARY_PATH"])
+            bootstrap_path.add(toolchain.rustc)
         ctx.actions.run(
             executable = ctx.executable._bootstrap_process_wrapper,
             inputs = compile_inputs,
             outputs = action_outputs,
             env = env,
-            arguments = [args.rustc_path, args.rustc_flags],
+            arguments = [bootstrap_path, args.rustc_flags],
             mnemonic = "Rustc",
             progress_message = "Compiling Rust (without process_wrapper) {} {}{} ({} file{})".format(
                 crate_info.type,

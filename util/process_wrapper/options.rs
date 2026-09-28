@@ -58,6 +58,7 @@ pub(crate) fn options() -> Result<Options, OptionError> {
     let mut stable_status_file_raw = None;
     let mut volatile_status_file_raw = None;
     let mut env_file_raw = None;
+    let mut env_raw = None;
     let mut out_dir_raw = None;
     let mut arg_file_raw = None;
     let mut bin_arg_file_raw = None;
@@ -78,6 +79,11 @@ pub(crate) fn options() -> Result<Options, OptionError> {
         "--env-file",
         "File(s) containing environment variables to pass to the child process.",
         &mut env_file_raw,
+    );
+    flags.define_repeated_flag(
+        "--env",
+        "Environment variables to restore before starting the child process.",
+        &mut env_raw,
     );
     flags.define_flag(
         "--out-dir",
@@ -226,6 +232,17 @@ pub(crate) fn options() -> Result<Options, OptionError> {
     let volatile_stamp_mappings =
         volatile_status_file_raw.map_or_else(Vec::new, |s| read_stamp_status_to_array(s).unwrap());
     let mut environment_file_block = env_from_files(env_file_raw.unwrap_or_default())?;
+    for assignment in env_raw.unwrap_or_default() {
+        let (key, value) = assignment.split_once('=').ok_or_else(|| {
+            OptionError::Generic(format!("invalid --env assignment: {assignment}"))
+        })?;
+        if key.is_empty() {
+            return Err(OptionError::Generic(
+                "--env requires a variable name".to_owned(),
+            ));
+        }
+        environment_file_block.insert(key.to_owned(), value.to_owned());
+    }
     if let Some(out_dir) = out_dir_raw.as_deref() {
         // `OUT_DIR` is materialized here (rather than in the action's `env`
         // dict on the rules_rust side) so that the value can flow through

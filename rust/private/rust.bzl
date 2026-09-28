@@ -595,6 +595,8 @@ def _rust_test_impl(ctx):
         data,
         {},
     )
+    if ctx.configuration.coverage_enabled and toolchain.exec_triple.str != toolchain.target_triple.str:
+        fail("Cross-built Rust coverage requires target-native coverage tools; use a native build platform for coverage.")
     if toolchain.coverage_supported and ctx.configuration.coverage_enabled:
         if not toolchain.llvm_profdata:
             fail("toolchain.llvm_profdata is required if toolchain.llvm_cov is set.")
