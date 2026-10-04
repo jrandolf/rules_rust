@@ -348,7 +348,7 @@ def _rlocationpath(file, workspace_name):
 
     return "{}/{}".format(workspace_name, file.short_path)
 
-def _create_runfiles_dir(ctx, script, data_runfiles, retain_list, owner_workspace_name, manifest_workspace_name):
+def _create_runfiles_dir(ctx, script, data_runfiles, retain_list, owner_workspace_name, manifest_workspace_name, windows_exec):
     """Create a runfiles directory to represent `CARGO_MANIFEST_DIR`.
 
     Merges runfiles from both the script binary and the data runfiles target,
@@ -366,6 +366,7 @@ def _create_runfiles_dir(ctx, script, data_runfiles, retain_list, owner_workspac
         retain_list (list): A list of strings to keep in generated runfiles directories.
         owner_workspace_name (str): The canonical workspace owning the build script.
         manifest_workspace_name (str): Its workspace component inside the Cargo tree.
+        windows_exec (bool): Whether the action runs on Windows.
 
     Returns:
         Tuple[File, Depset[File], Args]:
@@ -373,7 +374,15 @@ def _create_runfiles_dir(ctx, script, data_runfiles, retain_list, owner_workspac
             - Runfile inputs needed by the action.
             - The args required to create the directory.
     """
-    runfiles_dir = ctx.actions.declare_directory("{}.cargo_runfiles".format(ctx.label.name))
+    directory_name = "{}.cargo_runfiles".format(ctx.label.name)
+    if windows_exec:
+        # DEL is forbidden in Bazel target names but legal in Win32 filenames.
+        # A marked leaf cannot alias any target-name parent component; replacing
+        # the repeated MSVC triple is reversible without growing other names.
+        components = ctx.label.name.split("/")
+        components[-1] = "\177" + components[-1].replace("x86_64-pc-windows-msvc", "\177") + ".r"
+        directory_name = "/".join(components)
+    runfiles_dir = ctx.actions.declare_directory(directory_name)
 
     # External repos always fall into the `../` branch of `_rlocationpath`.
     workspace_name = ctx.workspace_name
@@ -395,6 +404,9 @@ def _create_runfiles_dir(ctx, script, data_runfiles, retain_list, owner_workspac
     all_runfiles_files = depset(transitive = [script_rf.files, data_rf.files])
 
     args = ctx.actions.args()
+    if windows_exec:
+        # The runner consumes raw lines, including the marked directory name.
+        args.set_param_file_format("multiline")
     args.use_param_file("--cargo_manifest_args=@%s", use_always = True)
     args.add_all([runfiles_dir], expand_directories = False)
     args.add(",".join(retain_list))
@@ -450,6 +462,7 @@ def _cargo_build_script_impl(ctx):
         retain_list = ctx.attr._cargo_manifest_dir_filename_suffixes_to_retain[BuildSettingInfo].value,
         owner_workspace_name = workspace_name,
         manifest_workspace_name = manifest_workspace_name,
+        windows_exec = toolchain.exec_triple.system == "windows",
     )
     manifest_dir = "{}/{}/{}".format(runfiles_dir.path, manifest_workspace_name, ctx.label.package)
 

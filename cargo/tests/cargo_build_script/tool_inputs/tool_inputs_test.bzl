@@ -25,16 +25,20 @@ def _tool_inputs_impl(ctx):
     asserts.true(env, tool in inputs, "Tool execution path is missing: " + tool)
     asserts.true(env, tool + ".runtime" in inputs, "Tool runtime file is missing: " + tool)
     target = analysistest.target_under_test(env)
-    trees = [file for file in actions[0].outputs.to_list() if file.is_directory and file.basename == target.label.name + ".cargo_runfiles"]
+    manifest_dir = actions[0].env["CARGO_MANIFEST_DIR"]
+    trees = [file for file in actions[0].outputs.to_list() if file.is_directory and manifest_dir.startswith(file.path + "/")]
     asserts.equals(env, 1, len(trees))
     if len(trees) == 1:
         workspace_name = target.label.workspace_name or ctx.workspace_name
         if "windows" in actions[0].env["HOST"].split("-"):
             workspace_name = "!"
+            asserts.true(env, len(trees[0].basename) < len(target.label.name + ".cargo_runfiles"))
+        else:
+            asserts.equals(env, target.label.name + ".cargo_runfiles", trees[0].basename)
         asserts.equals(
             env,
             "{}/{}/{}".format(trees[0].path, workspace_name, target.label.package),
-            actions[0].env["CARGO_MANIFEST_DIR"],
+            manifest_dir,
         )
     return analysistest.end(env)
 
