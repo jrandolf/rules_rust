@@ -24,6 +24,18 @@ def _tool_inputs_impl(ctx):
     tool = actions[0].env["CODEGEN"].removeprefix("${pwd}/")
     asserts.true(env, tool in inputs, "Tool execution path is missing: " + tool)
     asserts.true(env, tool + ".runtime" in inputs, "Tool runtime file is missing: " + tool)
+    target = analysistest.target_under_test(env)
+    trees = [file for file in actions[0].outputs.to_list() if file.is_directory and file.basename == target.label.name + ".cargo_runfiles"]
+    asserts.equals(env, 1, len(trees))
+    if len(trees) == 1:
+        workspace_name = target.label.workspace_name or ctx.workspace_name
+        if "windows" in actions[0].env["HOST"].split("-"):
+            workspace_name = "!"
+        asserts.equals(
+            env,
+            "{}/{}/{}".format(trees[0].path, workspace_name, target.label.package),
+            actions[0].env["CARGO_MANIFEST_DIR"],
+        )
     return analysistest.end(env)
 
 tool_inputs_test = analysistest.make(_tool_inputs_impl)
